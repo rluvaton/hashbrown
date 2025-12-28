@@ -225,6 +225,10 @@ where
         self.raw.get(hash, eq)
     }
 
+    pub fn prefetch<const LOCALITY: i32>(&self, hash: u64) {
+        self.raw.prefetch::<LOCALITY>(hash);
+    }
+
     /// Returns a mutable reference to an entry in the table with the given hash
     /// and which satisfies the equality function passed.
     ///

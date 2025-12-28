@@ -1482,6 +1482,33 @@ impl<T, A: Allocator> RawTable<T, A> {
         }
     }
 
+    /// Prefetch hash into locality
+    #[inline]
+    pub fn prefetch<const LOCALITY: i32>(&self, hash: u64) {
+        unsafe {
+            // SAFETY:
+            // 1. The [`RawTableInner`] must already have properly initialized control bytes since we
+            //    will never expose `RawTable::new_uninitialized` in a public API.
+            // 1. The `find_inner` function returns the `index` of only the full bucket, which is in
+            //    the range `0..self.buckets()`, so calling `self.bucket(index)` and `Bucket::as_ref`
+            //    is safe.
+            let result = self
+              .table
+              // Always return true
+              .find_inner(hash, &mut |index| true);
+
+            // Avoid `Option::map` because it bloats LLVM IR.
+            match result {
+                // SAFETY: See explanation above.
+                Some(index) => {
+                    branches::prefetch_read_data::<_, LOCALITY>(self.bucket(index).as_ptr());
+                },
+                None => {},
+            }
+        }
+
+    }
+
     /// Gets a mutable reference to an element in the table.
     #[inline]
     pub fn get_mut(&mut self, hash: u64, eq: impl FnMut(&T) -> bool) -> Option<&mut T> {
