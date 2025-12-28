@@ -1484,29 +1484,18 @@ impl<T, A: Allocator> RawTable<T, A> {
 
     /// Prefetch hash into locality
     #[inline]
-    pub fn prefetch<const LOCALITY: i32>(&self, hash: u64) {
+    pub fn prefetch_read<const LOCALITY: i32>(&self, hash: u64) {
         unsafe {
-            // SAFETY:
-            // 1. The [`RawTableInner`] must already have properly initialized control bytes since we
-            //    will never expose `RawTable::new_uninitialized` in a public API.
-            // 1. The `find_inner` function returns the `index` of only the full bucket, which is in
-            //    the range `0..self.buckets()`, so calling `self.bucket(index)` and `Bucket::as_ref`
-            //    is safe.
-            let result = self
-              .table
-              // Always return true
-              .find_inner(hash, &mut |index| true);
-
-            // Avoid `Option::map` because it bloats LLVM IR.
-            match result {
-                // SAFETY: See explanation above.
-                Some(index) => {
-                    branches::prefetch_read_data::<_, LOCALITY>(self.bucket(index).as_ptr());
-                },
-                None => {},
-            }
+            self.table.prefetch_read::<LOCALITY, T>(hash);
         }
+    }
 
+    /// Prefetch hash into locality
+    #[inline]
+    pub fn prefetch_write<const LOCALITY: i32>(&self, hash: u64) {
+        unsafe {
+            self.table.prefetch_write::<LOCALITY, T>(hash);
+        }
     }
 
     /// Gets a mutable reference to an element in the table.
@@ -2227,6 +2216,24 @@ impl RawTableInner {
 
             probe_seq.move_next(self.bucket_mask);
         }
+    }
+
+    #[inline(always)]
+    unsafe fn prefetch_read<const LOCALITY: i32, T>(&self, hash: u64) {
+        let mut probe_seq = self.probe_seq(hash);
+        let group = self.ctrl(probe_seq.pos);
+        branches::prefetch_read_data::<_, LOCALITY>(group);
+        let bucket_ptr = self.bucket_ptr(probe_seq.pos % self.bucket_mask, size_of::<T>()) as *mut T;
+        branches::prefetch_read_data::<T, LOCALITY>(bucket_ptr);
+    }
+
+    #[inline(always)]
+    unsafe fn prefetch_write<const LOCALITY: i32, T>(&self, hash: u64) {
+        let mut probe_seq = self.probe_seq(hash);
+        let group = self.ctrl(probe_seq.pos);
+        branches::prefetch_write_data::<_, LOCALITY>(group);
+        let bucket_ptr = self.bucket_ptr(probe_seq.pos % self.bucket_mask, size_of::<T>()) as *mut T;
+        branches::prefetch_write_data::<T, LOCALITY>(bucket_ptr);
     }
 
     /// Prepares for rehashing data in place (that is, without allocating new memory).
